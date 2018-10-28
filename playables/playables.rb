@@ -1,12 +1,20 @@
+# Playables
+# Playables is an object-oriented way to model musical information in Sonic Pi.
 
-defonce :use_playable, :override => true do
+# If you want to modify these classes, you must set `override` true.
+
+defonce :use_playables, :override => false do
   
   class Playables
-    @@runtime = nil
+    @@runtime = nil # A reference to the Sonic Pi runtime
+    
+    # Creates a factory for a synth voice with the given default options
     
     def self.synth(synth_sym=:sine, default_options={})
       PlayableSynthFactory.new(synth_sym, default_options)
     end
+    
+    # Creates a factory for a midi voice with the given default options
     
     def self.midi(port, default_options={})
       PlayableMidiFactory.new(port, default_options)
@@ -19,6 +27,8 @@ defonce :use_playable, :override => true do
     def self.runtime
       @@runtime
     end
+    
+    # Defines beat values for the supported symbolic durations
     
     DURATION_MAP = {
       :n1d => 6.0,
@@ -37,23 +47,78 @@ defonce :use_playable, :override => true do
       :n32 => 0.125
     }
     
+    # Defines lambdas for humanized velocity levels that map to the traditional dynamic levels
+    
     VELOCITY_MAP = {
-      off: -> (i) { 0 },
-      ppp: -> (i) { Playables.runtime.rrand_i(23, 36) },
-      pp:  -> (i) { Playables.runtime.rrand_i(36, 49) },
-      p:   -> (i) { Playables.runtime.rrand_i(49, 62) },
-      mp:  -> (i) { Playables.runtime.rrand_i(62, 75) },
-      mf:  -> (i) { Playables.runtime.rrand_i(75, 88) },
-      f:   -> (i) { Playables.runtime.rrand_i(88, 101) },
-      ff:  -> (i) { Playables.runtime.rrand_i(101, 114) },
-      fff: -> (i) { Playables.runtime.rrand_i(114, 127) }
+      off: -> (i=0) { 0 },
+      ppp: -> (i=0) { Playables.runtime.rrand_i(23, 36) },
+      pp:  -> (i=0) { Playables.runtime.rrand_i(36, 49) },
+      p:   -> (i=0) { Playables.runtime.rrand_i(49, 62) },
+      mp:  -> (i=0) { Playables.runtime.rrand_i(62, 75) },
+      mf:  -> (i=0) { Playables.runtime.rrand_i(75, 88) },
+      f:   -> (i=0) { Playables.runtime.rrand_i(88, 101) },
+      ff:  -> (i=0) { Playables.runtime.rrand_i(101, 114) },
+      fff: -> (i=0) { Playables.runtime.rrand_i(114, 127) }
     }
   end
   
+  # Methods that are included in all of the voice factory classes
+  # Requires that the class implements the `factory` method to create a playable
+  
   module FactoryMethods
+    
+    # Generate a single playable note
+    
+    def note(note_num=0, duration=:n4, options={})
+      factory(note_num, duration, delay_accum, 
+              resolve_options(@default_options).merge(options))
+    end
+    
+    # Generate an array of playables, one per note in the given array
+    
+    def chord(notes=[], duration=:n4, options={})
+      playables = []
+      notes.each_with_index do |n, i|
+        playables << factory(n, duration, delay_accum,
+                             resolve_options(@default_options, i).merge(options))
+      end
+      playables
+    end
+    
+    # Generate an array of playables, one per note in the given array
+    # Each will be delayed by a small amount, producing an arpeggio
+    
+    def arp(notes=[], duration=:n4, arp_delay=0.125, options={})
+      playables = []
+      notes.each_with_index do |n, i|
+        playables << factory(n, duration,
+                             delay_accum + arp_delay * i,
+                             resolve_options(@default_options, i).merge(options))
+      end
+      playables
+    end
+    
+    # Generate a runnable sequence of regular notes and rests
+    
+    def seq(notes=[], duration=:n4, options={})
+      runables = []
+      notes.each_with_index do |n, i|
+        runables << factory(n, duration, delay_accum,
+                            resolve_options(@default_options, i).merge(options))
+        runables << rest(duration)
+      end
+      runables
+    end
+    
+    # Create a rest
+    
     def rest(duration)
       Rest.new(duration)
     end
+    
+    # Resolve the default options in a factory that will be passed to each Playable.
+    # Supports lambda options as long as they accept the index parameter.
+    # Also supports symbolic velocities and durations.
     
     def resolve_options(original_options, index=0)
       options = {}
@@ -67,15 +132,17 @@ defonce :use_playable, :override => true do
           options[:duration] = Playables::DURATION_MAP[opt_val]
         end
         if opt_val.is_a?(Symbol) && [:velocity, :vel].include?(key)
-          options[key.to_sym] = Playables::VELOCITY_MAP[opt_val].call(index)
+          options[key.to_sym] = Playables::VELOCITY_MAP[opt_val].call()
         end
         if opt_val.is_a?(Symbol) && key == :amp
-          options[:amp] = Playables::VELOCITY_MAP[opt_val].call(index).to_f / 127.0
+          options[:amp] = Playables::VELOCITY_MAP[opt_val].call().to_f / 127.0
         end
       end
       options
     end
   end
+  
+  # Methods to manipulate note values that are included in all of the Playables.
   
   module NoteMethods
     def set_note(n)
@@ -86,14 +153,22 @@ defonce :use_playable, :override => true do
       @note ||= 0.0
     end
     
+    # Passes the current note value to the block, and then sets it to whatever the block returns.
+    # Produces a clone of the playable with the new note set, leaving the original unmodified.
+    
     def tune(&block)
       clone().tune!(&block)
     end
+    
+    # Passes the current note value to the block, and then sets it to whatever the block returns.
+    # Mutates the note in the Playable.
     
     def tune!(&block)
       set_note block.call(@note)
       self
     end
+    
+    # Resolve note values that might be procs or letter symbols.
     
     def resolve_note(note)
       if note.is_a?(Proc)
@@ -109,6 +184,8 @@ defonce :use_playable, :override => true do
     end
   end
   
+  # Methods to manipulate duration values that are included in all of the Playables.
+  
   module DurationMethods
     
     def set_duration(d)
@@ -119,9 +196,15 @@ defonce :use_playable, :override => true do
       @duration ||= 0.0
     end
     
+    # Passes the current duration value to the block, and then sets it to whatever the block returns.
+    # Produces a clone of the playable with the new duration set, leaving the original unmodified.
+    
     def stretch(&block)
       clone.stretch!(&block)
     end
+    
+    # Passes the current duration value to the block, and then sets it to whatever the block returns.
+    # Mutates the duration in the Playable.
     
     def stretch!(&block)
       set_duration block.call(@duration)
@@ -130,11 +213,12 @@ defonce :use_playable, :override => true do
     
     protected
     
+    # Resolves duration values that might be procs or symbolic durations.
+    
     def resolve_duration(duration)
       if duration.is_a?(Proc)
         duration = duration.call()
       end
-      
       if duration.is_a?(Symbol)
         duration = Playables::DURATION_MAP[duration]
       end
@@ -145,6 +229,8 @@ defonce :use_playable, :override => true do
     end
   end
   
+  # Delay accumulator included in all factories.
+  
   module DelayAccumulator
     include DurationMethods
     
@@ -152,10 +238,15 @@ defonce :use_playable, :override => true do
       @delay_accum ||= 0.0
     end
     
+    # Each call to rest will increase the delay applied 
+    # to all subsequent playables generated by this factory.
+    
     def rest(duration)
       @delay_accum += resolve_duration(duration)
     end
   end
+  
+  # A factory for synth playables
   
   class PlayableSynthFactory
     include DelayAccumulator
@@ -166,40 +257,12 @@ defonce :use_playable, :override => true do
       @default_options = default_options
     end
     
-    def note(note_num, duration=:n4, options={})
-      PlayableSynthNote.new(@synth, note_num, duration, delay_accum,
-                            resolve_options(@default_options).merge(options))
-    end
-    
-    def chord(notes, duration=:n4, options={})
-      playables = []
-      notes.each_with_index do |n, i|
-        playables << PlayableSynthNote.new(@synth, n, duration, delay_accum,
-                                           resolve_options(@default_options, i).merge(options))
-      end
-      playables
-    end
-    
-    def arp(notes, duration=:n4, arp_delay=0.125, options={})
-      playables = []
-      notes.each_with_index do |n, i|
-        playables << PlayableSynthNote.new(@synth, n, duration,
-                                           delay_accum + arp_delay * i,
-                                           resolve_options(@default_options, i).merge(options))
-      end
-      playables
-    end
-    
-    def seq(notes=[], duration=:n4, options={})
-      runables = []
-      notes.each_with_index do |n, i|
-        runables << PlayableSynthNote.new(@synth, n, duration, delay_accum,
-                                          resolve_options(@default_options, i).merge(options))
-        runables << Rest.new(duration)
-      end
-      runables
+    def factory(*args)
+      PlayableSynthNote.send :new, *[@synth].concat(args)
     end
   end
+  
+  # A factory for midi playables
   
   class PlayableMidiFactory
     include DelayAccumulator
@@ -210,37 +273,8 @@ defonce :use_playable, :override => true do
       @default_options = default_options
     end
     
-    def note(note_num, duration=:n4, options={})
-      PlayableMidiNote.new(@port, note_num, duration, delay_accum,
-                           resolve_options(@default_options).merge(options))
-    end
-    
-    def chord(notes=[], duration=:n4, options={})
-      playables = []
-      notes.each_with_index do |n, i|
-        playables << PlayableMidiNote.new(@port, n, duration, delay_accum,
-                                          resolve_options(@default_options, i).merge(options))
-      end
-      playables
-    end
-    
-    def arp(notes=[], duration=:n4, arp_delay=0.125, options={})
-      playables = []
-      notes.each_with_index do |n, i|
-        playables << PlayableMidiNote.new(@port, n, duration,
-                                          delay_accum + arp_delay * i,
-                                          resolve_options(@default_options, i).merge(options))
-      end
-      playables
-    end
-    
-    def seq(notes=[], duration=:n4, options={})
-      playables = []
-      notes.each_with_index do |n, i|
-        playables << PlayableSynthNote.new(port, n, duration, delay_accum,
-                                           resolve_options(@default_options, i).merge(options))
-      end
-      playables
+    def factory(*args)
+      PlayableMidiNote.send :new, *[@port].concat(args)
     end
   end
   
@@ -249,6 +283,8 @@ defonce :use_playable, :override => true do
       play
     end
   end
+  
+  # A playable for a synth note
   
   class PlayableSynthNote
     include NoteMethods
@@ -260,18 +296,29 @@ defonce :use_playable, :override => true do
       @note = resolve_note(note_sym)
       @duration = resolve_duration(duration)
       @delay = delay
-      @options = options
+      @amp = resolve_amp(options[:amp] || 0.5)
+      @options = options.merge(:sustain => @duration, :amp => @amp)
     end
     
     def play
       Playables.runtime.time_warp @delay do
         Playables.runtime.with_synth @synth do
-          Playables.runtime.play @note, @options.merge(:sustain => @duration)
+          Playables.runtime.play @note, @options
         end
       end
       self
     end
+    
+    def resolve_amp(amp)
+      if amp.is_a?(Symbol)
+        Playables::VELOCITY_MAP[amp].call().to_f / 127.0
+      else
+        amp
+      end
+    end
   end
+  
+  # A playable for a midi note
   
   class PlayableMidiNote
     include NoteMethods
@@ -283,7 +330,8 @@ defonce :use_playable, :override => true do
       @note = resolve_note(note_sym)
       @duration = resolve_duration(duration)
       @delay = delay
-      @options = options.merge(:port => @port)
+      @velocity = resolve_velocity(options[:vel] || options[:velocity] || 0.5)
+      @options = options.merge(:port => @port, :velocity => @velocity, :vel => nil)
     end
     
     def play
@@ -295,7 +343,17 @@ defonce :use_playable, :override => true do
       end
       self
     end
+    
+    def resolve_velocity(velocity)
+      if velocity.is_a?(Symbol)
+        Playables::VELOCITY_MAP[velocity].call().to_f
+      else
+        velocity
+      end
+    end
   end
+  
+  # A rest
   
   class Rest
     include DurationMethods
@@ -306,22 +364,32 @@ defonce :use_playable, :override => true do
       @duration = resolve_duration(duration)
     end
     
+    # Sleeps when runs
+    
     def run
       Playables.runtime.sleep @duration
     end
     
+    # No-op
+    
     def play
     end
     
+    # Note is always 0
+    
     def set_note(n)
-      @note = 0 # rests are always 0
+      @note = 0
     end
   end
+  
+  # Methods to extend Array so that we can work with groups of Runnables and Playables
   
   module ArrayMethods
     def deep_clone()
       map { |it| it.respond_to?(:deep_clone) ? it.deep_clone : it.clone }
     end
+    
+    # Play all elements in the array, recursively
     
     def play
       each do |playable|
@@ -331,6 +399,8 @@ defonce :use_playable, :override => true do
       end
     end
     
+    # Run all elements in the array, recursively
+    
     def run 
       each do |runnable|
         if runnable.respond_to?(:run)
@@ -339,9 +409,13 @@ defonce :use_playable, :override => true do
       end
     end
     
+    # Tune all elements, recursively, returning a deep clone
+    
     def tune(&block)
       deep_clone.tune!(&block)
     end
+    
+    # Tune all elements, recursively
     
     def tune!(&block)
       each do |tunable|
@@ -353,9 +427,13 @@ defonce :use_playable, :override => true do
       return self
     end
     
+    # Stretch all elements, recursively, returning a deep clone
+    
     def stretch(&block)
       deep_clone.stretch!(&block)
     end
+    
+    # Stretch all elements, recursively
     
     def stretch!(&block)
       each do |stretchable|

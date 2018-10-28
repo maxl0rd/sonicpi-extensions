@@ -21,7 +21,7 @@ To use the library, you need to download and include the `playables.rb` file in 
 
 ```
 run_file "/path/to/the/playables.rb"
-use_playable
+use_playables
 ```
 
 Now we can create an instrument:
@@ -152,7 +152,13 @@ piano_mf = pf = Playables.synth(:piano, {amp: mf})
 piano_mf.note(:c4).play
 ```
 
-Using lambdas is a little more complex because Playables resolves procs and lambdas differently than Sonic Pi does natively. Lambdas must be called with the correct number of arguments, and Sonic Pi calls them with no args.
+Using lambdas is a little more complex because Playables resolves procs and lambdas differently than Sonic Pi does natively. Lambdas must be called with the correct number of arguments, and Sonic Pi calls them with no args. If you want a lambda to work with either, give it a single param with a default.
+
+```
+my_pretty_flexible_lamdba = -> (i=0) { 
+  42 # calculate something
+}
+```
 
 Playables resolves lambdas by calling them with a single integer argument, which represents the index of the note that is being generated. This currently applies to chords and sequences. This enables more customization of the properties of each. 
 
